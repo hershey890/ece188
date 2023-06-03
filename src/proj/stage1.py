@@ -1,7 +1,7 @@
 from pathlib import Path
 from itertools import repeat
 import multiprocessing as mp
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Callable
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
@@ -20,13 +20,10 @@ def load_imgs(path: str | Path) -> np.ndarray:
 def calc_psnr(img1: np.ndarray, img2: np.ndarray) -> float:
     """Calculate the PSNR between two images or arrays of images"""
     assert img1.shape == img2.shape and img1.dtype == img2.dtype
-    if img1.ndim == 2 or \
-        img1.ndim == 3 and img1.shape[-1] == 3:  # single image
+    if img1.ndim == 2 or img1.ndim == 3 and img1.shape[-1] == 3:  # single image
         return peak_signal_noise_ratio(img1, img2)
     elif img1.ndim == 3 or img1.ndim == 4:  # n-images
-        return np.mean(
-            [peak_signal_noise_ratio(i1, i2) for i1, i2 in zip(img1, img2)]
-        )
+        return np.mean([peak_signal_noise_ratio(i1, i2) for i1, i2 in zip(img1, img2)])
     else:
         raise ValueError("Invalid image dimensions.")
 
@@ -39,9 +36,7 @@ def calc_ssim(img1: np.ndarray, img2: np.ndarray) -> float:
     elif img1.ndim == 3 and img1.shape[-1] == 3:  # 2 RGB images
         return structural_similarity(img1, img2, channel_axis=2)
     elif img1.ndim == 3:  # n grayscale images
-        return np.mean(
-            [structural_similarity(i1, i2) for i1, i2 in zip(img1, img2)]
-        )
+        return np.mean([structural_similarity(i1, i2) for i1, i2 in zip(img1, img2)])
     elif img1.ndim == 4:  # n RGB images
         return np.mean(
             [
@@ -103,7 +98,9 @@ class Filters:
         self.imgs = {}
         self.imgs_truth = np.array(list(load_imgs(data_folder + "/" + self.input_type)))
         for blur_type in self.blur_types:
-            self.imgs[blur_type] = np.array(list(load_imgs(data_folder + "/" + blur_type)))
+            self.imgs[blur_type] = np.array(
+                list(load_imgs(data_folder + "/" + blur_type))
+            )
 
     def gaussian_blur(self) -> np.ndarray:
         """Filters gaussian blurred images."""
@@ -124,13 +121,15 @@ class Filters:
     def speckle_noise(self) -> np.ndarray:
         """Filters speckle noise images."""
         return filter_speckle_noise(self.imgs["speckle_noise"])
-        
+
     @staticmethod
-    def evaluate_filter(imgs_truth, imgs_test, func):
+    def evaluate_filter(
+        imgs_truth: np.ndarray, imgs_test: np.ndarray, func: Callable, blur_type: str
+    ) -> Tuple[float, float, float]:
         imgs_test = func(imgs_test)
         psnr = calc_psnr(imgs_truth, imgs_test)
         ssim = calc_ssim(imgs_truth, imgs_test)
-        return psnr, ssim
+        return psnr, ssim, blur_type
 
     def evaluate(self, blur_type: str = None) -> Dict:
         """Evaluate all denoising algorithms
@@ -153,14 +152,14 @@ class Filters:
             "gaussian_noise": (19.5, 0.60),
             "motion_blur": (27.5, 0.70),
             "sp_noise": (26.5, 0.90),
-            "speckle_noise": (20.0, 0.65)
+            "speckle_noise": (20.0, 0.65),
         }
         funcs = {
             "gaussian_blur": filter_gaussian_blur,
             "gaussian_noise": filter_gaussian_noise,
             "motion_blur": filter_motion_blur,
             "sp_noise": filter_salt_pepper_noise,
-            "speckle_noise": filter_speckle_noise
+            "speckle_noise": filter_speckle_noise,
         }
 
         def print_result(blur_type, psnr, ssim, psnr_goal, ssim_goal) -> str:
@@ -172,17 +171,28 @@ class Filters:
                 print(f"\tActual: PSNR={psnr:.2f}, SSIM={ssim:.2f}\n")
 
         if blur_type is not None:
-            psnr_ssim_vals = [Filters.evaluate_filter(self.imgs_truth, self.imgs[blur_type], funcs[blur_type])]
+            psnr_ssim_vals = [
+                Filters.evaluate_filter(
+                    self.imgs_truth,
+                    self.imgs[blur_type],
+                    funcs[blur_type],
+                    blur_type,
+                )
+            ]
         else:
-            imgs = [self.imgs[blur] for blur in funcs.keys()]
-            functions = funcs.values()
-            with mp.Pool(5) as p:
-                psnr_ssim_vals = p.starmap(Filters.evaluate_filter, zip(repeat(self.imgs_truth, 5), imgs, functions))
-        
+            blurs, funcs = funcs.keys(), funcs.values()
+            imgs = [self.imgs[blur] for blur in blurs]
+            n_processes = min(mp.cpu_count(), 5)
+            with mp.Pool(n_processes) as p:
+                psnr_ssim_vals = p.starmap(
+                    Filters.evaluate_filter,
+                    zip(repeat(self.imgs_truth, n_processes), imgs, funcs, blurs),
+                )
+
         ret = {}
-        for i, (psnr, ssim) in enumerate(psnr_ssim_vals):
-            blur = self.blur_types[i]
+        print(psnr_ssim_vals)
+        for psnr, ssim, blur in psnr_ssim_vals:
             ret[blur] = (psnr, ssim)
             print_result(blur, psnr, ssim, *goals[blur])
-        
+
         return ret
