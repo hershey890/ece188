@@ -1,4 +1,7 @@
 from pathlib import Path
+from itertools import repeat
+import multiprocessing as mp
+from typing import List, Dict, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
@@ -86,8 +89,8 @@ class Filters:
         A dictionary of images, where the keys are the blur types.
     """
 
+    input_type = "input_imgs"
     blur_types = (
-        "input_imgs",
         "gaussian_blur",
         "gaussian_noise",
         "motion_blur",
@@ -96,9 +99,11 @@ class Filters:
     )
 
     def __init__(self, data_folder: str | Path):
+        self._data_folder = data_folder
         self.imgs = {}
+        self.imgs_truth = np.array(list(load_imgs(data_folder + "/" + self.input_type)))
         for blur_type in self.blur_types:
-            self.imgs[blur_type] = np.array(load_imgs(data_folder + blur_type))
+            self.imgs[blur_type] = np.array(list(load_imgs(data_folder + "/" + blur_type)))
 
     def gaussian_blur(self) -> np.ndarray:
         """Filters gaussian blurred images."""
@@ -119,68 +124,65 @@ class Filters:
     def speckle_noise(self) -> np.ndarray:
         """Filters speckle noise images."""
         return filter_speckle_noise(self.imgs["speckle_noise"])
+        
+    @staticmethod
+    def evaluate_filter(imgs_truth, imgs_test, func):
+        imgs_test = func(imgs_test)
+        psnr = calc_psnr(imgs_truth, imgs_test)
+        ssim = calc_ssim(imgs_truth, imgs_test)
+        return psnr, ssim
 
+    def evaluate(self, blur_type: str = None) -> Dict:
+        """Evaluate all denoising algorithms
 
-def evaluate(data_folder: str | Path, blur_type: str = None) -> None:
-    """Evaluate all denoising algorithms
+        Parameters
+        ----------
+        blur_type : str
+            The type of blur to evaluate. If None, all types are evaluated.
+        data_folder : str
+            The path to the data folder.
 
-    Parameters
-    ----------
-    blur_type : str
-        The type of blur to evaluate. If None, all types are evaluated.
-    data_folder : str
-        The path to the data folder.
-    """
+        Returns
+        -------
+        dict:
+            blur_type: (psnr: float, ssim: float)
+        """
 
-    goals = {
-        "gaussian_blur": (26.5, 0.65),  # psnr, ssim
-        "gaussian_noise": (19.5, 0.60),
-        "motion_blur": (27.5, 0.70),
-        "sp_noise": (26.5, 0.90),
-        "speckle_noise": (20.0, 0.65),
-    }
-    funcs = {
-        "gaussian_blur": filter_gaussian_blur,
-        "gaussian_noise": filter_gaussian_noise,
-        "motion_blur": filter_motion_blur,
-        "sp_noise": filter_salt_pepper_noise,
-        "speckle_noise": filter_speckle_noise,
-    }
+        goals = {
+            "gaussian_blur": (26.5, 0.65),  # psnr, ssim
+            "gaussian_noise": (19.5, 0.60),
+            "motion_blur": (27.5, 0.70),
+            "sp_noise": (26.5, 0.90),
+            "speckle_noise": (20.0, 0.65)
+        }
+        funcs = {
+            "gaussian_blur": filter_gaussian_blur,
+            "gaussian_noise": filter_gaussian_noise,
+            "motion_blur": filter_motion_blur,
+            "sp_noise": filter_salt_pepper_noise,
+            "speckle_noise": filter_speckle_noise
+        }
 
-    def eval(img1, img2):
-        return calc_psnr(img1, img2), calc_ssim(img1, img2)
+        def print_result(blur_type, psnr, ssim, psnr_goal, ssim_goal) -> str:
+            if psnr > psnr_goal and ssim > ssim_goal:
+                print(f"{blur_type}: PASS")
+            else:
+                print(f"{blur_type}: FAIL")
+                print(f"\tGoal: PSNR={psnr_goal:.2f}, SSIM={ssim_goal:.2f}")
+                print(f"\tActual: PSNR={psnr:.2f}, SSIM={ssim:.2f}\n")
 
-    def print_result(blur_type, psnr, ssim, psnr_goal, ssim_goal):
-        if psnr > psnr_goal and ssim > ssim_goal:
-            print(f"{blur_type}: PASS")
+        if blur_type is not None:
+            psnr_ssim_vals = [Filters.evaluate_filter(self.imgs_truth, self.imgs[blur_type], funcs[blur_type])]
         else:
-            print(f"{blur_type}: FAIL")
-            print(f"\tGoal: PSNR={psnr_goal:.2f}, SSIM={ssim_goal:.2f}")
-            print(f"\tActual: PSNR={psnr:.2f}, SSIM={ssim:.2f}")
-
-    imgs_truth = list(load_imgs(data_folder + "input_imgs"))
-    if blur_type is None:
-        blur_types = [
-            "gaussian_blur",
-            "gaussian_noise",
-            "motion_blur",
-            "sp_noise",
-            "speckle_noise",
-        ]
-    else:
-        blur_types = [blur_type]
-
-    for blur_type in blur_types:
-        imgs_test = list(load_imgs(data_folder + blur_type))
-        psnr = 0
-        ssim = 0
-        for img_truth, img_test in zip(imgs_truth, imgs_test):
-            img_test = funcs[blur_type](img_test)
-            a, b = eval(img_truth, img_test)
-            psnr += a
-            ssim += b
-        psnr /= len(imgs_truth)
-        ssim /= len(imgs_truth)
-
-        psnr_goal, ssim_goal = goals[blur_type]
-        print_result(blur_type, psnr, ssim, psnr_goal, ssim_goal)
+            imgs = [self.imgs[blur] for blur in funcs.keys()]
+            functions = funcs.values()
+            with mp.Pool(5) as p:
+                psnr_ssim_vals = p.starmap(Filters.evaluate_filter, zip(repeat(self.imgs_truth, 5), imgs, functions))
+        
+        ret = {}
+        for i, (psnr, ssim) in enumerate(psnr_ssim_vals):
+            blur = self.blur_types[i]
+            ret[blur] = (psnr, ssim)
+            print_result(blur, psnr, ssim, *goals[blur])
+        
+        return ret

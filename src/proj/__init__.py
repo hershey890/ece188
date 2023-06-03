@@ -8,5 +8,4 @@ from .stage1 import (
     filter_salt_pepper_noise,
     filter_speckle_noise,
     Filters,
-    evaluate,
 )
