@@ -31,31 +31,35 @@ def load_imgs(path: str | Path, encoding: str = 'rgb') -> np.ndarray:
                 raise ValueError("Invalid encoding.")
 
 
-def calc_psnr(img1: np.ndarray, img2: np.ndarray) -> float:
+def calc_psnr(truth_img: np.ndarray, test_img: np.ndarray) -> float:
     """Calculate the PSNR between two images or arrays of images"""
-    assert img1.shape == img2.shape and img1.dtype == img2.dtype, "calc_psnr assertion error"
-    if img1.ndim == 2 or img1.ndim == 3 and img1.shape[-1] == 3:  # single image
-        return peak_signal_noise_ratio(img1, img2)
-    elif img1.ndim == 3 or img1.ndim == 4:  # n-images
-        return np.mean([peak_signal_noise_ratio(i1, i2) for i1, i2 in zip(img1, img2)])
+    assert truth_img.shape == test_img.shape and truth_img.dtype == test_img.dtype, "calc_psnr assertion error"
+    truth_img = sk.img_as_float(truth_img)
+    test_img = sk.img_as_float(test_img)
+    if truth_img.ndim == 2 or truth_img.ndim == 3 and truth_img.shape[-1] == 3:  # single image
+        return peak_signal_noise_ratio(truth_img, test_img)
+    elif truth_img.ndim == 3 or truth_img.ndim == 4:  # n-images
+        return np.mean([peak_signal_noise_ratio(i1, i2) for i1, i2 in zip(truth_img, test_img)])
     else:
         raise ValueError("Invalid image dimensions.")
 
 
-def calc_ssim(img1: np.ndarray, img2: np.ndarray) -> float:
+def calc_ssim(truth_img: np.ndarray, test_img: np.ndarray) -> float:
     """Calculate the SSIM between two images or arrays of images"""
-    assert img1.shape == img2.shape and img1.dtype == img2.dtype, "calc_ssim assertion error"
-    if img1.ndim == 2:  # 2 grayscale images
-        return structural_similarity(img1, img2)
-    elif img1.ndim == 3 and img1.shape[-1] == 3:  # 2 RGB images
-        return structural_similarity(img1, img2, channel_axis=2)
-    elif img1.ndim == 3:  # n grayscale images
-        return np.mean([structural_similarity(i1, i2) for i1, i2 in zip(img1, img2)])
-    elif img1.ndim == 4:  # n RGB images
+    assert truth_img.shape == test_img.shape and truth_img.dtype == test_img.dtype, "calc_ssim assertion error"
+    truth_img = sk.img_as_float(truth_img)
+    test_img = sk.img_as_float(test_img)
+    if truth_img.ndim == 2:  # 2 grayscale images
+        return structural_similarity(truth_img, test_img)
+    elif truth_img.ndim == 3 and truth_img.shape[-1] == 3:  # 2 RGB images
+        return structural_similarity(truth_img, test_img, channel_axis=2)
+    elif truth_img.ndim == 3:  # n grayscale images
+        return np.mean([structural_similarity(i1, i2) for i1, i2 in zip(truth_img, test_img)])
+    elif truth_img.ndim == 4:  # n RGB images
         return np.mean(
             [
                 structural_similarity(i1, i2, channel_axis=2)
-                for i1, i2 in zip(img1, img2)
+                for i1, i2 in zip(truth_img, test_img)
             ]
         )
     else:
@@ -85,7 +89,7 @@ def filter_gaussian_blur(img) -> np.ndarray:
         output_img[:,:,0] = (255*deconvolved_W).astype(np.uint8)
         return cv2.cvtColor(output_img, cv2.COLOR_YUV2RGB)
 
-    def gaussian_unsharp_mask(img): # 22.4, 0.64
+    def gaussian_unsharp_mask(img): # 22.4, 0.76
         return np.uint8(255*unsharp_mask(img/255, radius=3, amount=3, channel_axis=2))
     
     return gaussian_unsharp_mask(img)
@@ -95,15 +99,17 @@ def filter_gaussian_noise(img) -> np.ndarray:
     """Filters gaussian noise images."""
     return img.copy()
 
-# def motion_blur() -> np.ndarray:
+# def filter_motion_blur() -> np.ndarray:
 #     """Filters motion blurred images."""
 #     return self.imgs["motion_blur"]
 
-# def sp_noise() -> np.ndarray:
-#     """Filters salt and pepper noise images."""
-#     return self.imgs["sp_noise"]
+def filter_sp_noise(img) -> np.ndarray:
+    """Filters salt and pepper noise images."""
+    # goal 26.5, 0.90, baseline 14.49, 0.26
+    # hits 26.77, 0.92
+    return cv2.medianBlur(img, 3)
 
-# def speckle_noise() -> np.ndarray:
+# def filter_speckle_noise() -> np.ndarray:
 #     """Filters speckle noise images."""
 #     return self.imgs["speckle_noise"]
 
@@ -127,6 +133,13 @@ class FilterEvaluator:
         "sp_noise",
         "speckle_noise",
     )
+    _funcs = {
+        "gaussian_blur": filter_gaussian_blur,
+        "gaussian_noise": filter_gaussian_noise,
+        # "motion_blur": self.motion_blur,
+        "sp_noise": filter_sp_noise,
+        # "speckle_noise": self.speckle_noise,
+    }
 
     def __init__(self, data_folder: str | Path, gaussian_sigma: float = 3.75):
         """
@@ -177,13 +190,6 @@ class FilterEvaluator:
             "sp_noise": (26.5, 0.90),
             "speckle_noise": (20.0, 0.65),
         }
-        funcs = {
-            "gaussian_blur": filter_gaussian_blur,
-            "gaussian_noise": filter_gaussian_noise,
-            # "motion_blur": self.motion_blur,
-            # "sp_noise": self.sp_noise,
-            # "speckle_noise": self.speckle_noise,
-        }
 
         def print_result(blur_type, psnr, ssim, psnr_goal, ssim_goal) -> str:
             if psnr > psnr_goal and ssim > ssim_goal:
@@ -198,13 +204,13 @@ class FilterEvaluator:
                 FilterEvaluator._run(
                     self.imgs_truth,
                     self.imgs[blur_type],
-                    funcs[blur_type],
+                    self._funcs[blur_type],
                     blur_type,
                 )
             ]
         else:
             n_processes = min(mp.cpu_count(), 5)
-            blurs, funcs = funcs.keys(), funcs.values()
+            blurs, funcs = self._funcs.keys(), self._funcs.values()
             imgs = [self.imgs[blur] for blur in blurs]
             imgs_truth = repeat(self.imgs_truth, n_processes)
             with mp.Pool(n_processes) as p:
@@ -220,3 +226,17 @@ class FilterEvaluator:
             print_result(blur, psnr, ssim, *goals[blur])
 
         return ret
+
+    def plot(self, blur_type: str, n_images: int = 1, width: int = 20) -> None:
+        if n_images > self.imgs_truth.shape[0]:
+            raise ValueError("n_images must be <= number of images in data folder.")
+        plt.figure(figsize=(width, n_images*width//2))
+        plt.title('Truth on left, filtered on right')
+        for i in range(n_images):
+            img_filtered = self._funcs[blur_type](self.imgs[blur_type][i])
+            img_truth = self.imgs_truth[i]
+            plt.subplot(n_images, 2, 2*i+1)
+            plt.imshow(img_truth)
+            plt.subplot(n_images, 2, 2*i+2)
+            plt.imshow(img_filtered)
+        plt.show()
