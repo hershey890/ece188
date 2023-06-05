@@ -99,9 +99,9 @@ def filter_gaussian_noise(img) -> np.ndarray:
     """Filters gaussian noise images."""
     return img.copy()
 
-# def filter_motion_blur() -> np.ndarray:
-#     """Filters motion blurred images."""
-#     return self.imgs["motion_blur"]
+def filter_motion_blur(img) -> np.ndarray:
+    """Filters motion blurred images."""
+    return img.copy()
 
 def filter_sp_noise(img) -> np.ndarray:
     """Filters salt and pepper noise images."""
@@ -109,9 +109,11 @@ def filter_sp_noise(img) -> np.ndarray:
     # hits 26.77, 0.92
     return cv2.medianBlur(img, 3)
 
-# def filter_speckle_noise() -> np.ndarray:
-#     """Filters speckle noise images."""
-#     return self.imgs["speckle_noise"]
+def filter_speckle_noise(img) -> np.ndarray:
+    """Filters speckle noise images."""
+    # goal: 20.0, 0.65, baseline 18.4, 0.60
+    # hits 23.3, 0.77
+    return cv2.medianBlur(img, 3)
 
 
 class FilterEvaluator:
@@ -136,9 +138,9 @@ class FilterEvaluator:
     _funcs = {
         "gaussian_blur": filter_gaussian_blur,
         "gaussian_noise": filter_gaussian_noise,
-        # "motion_blur": self.motion_blur,
+        "motion_blur": filter_motion_blur,
         "sp_noise": filter_sp_noise,
-        # "speckle_noise": self.speckle_noise,
+        "speckle_noise": filter_speckle_noise,
     }
 
     def __init__(self, data_folder: str | Path, gaussian_sigma: float = 3.75):
