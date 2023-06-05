@@ -4,8 +4,8 @@ from .stage1 import (
     calc_ssim,
     filter_gaussian_blur,
     filter_gaussian_noise,
-    filter_motion_blur,
-    filter_salt_pepper_noise,
-    filter_speckle_noise,
-    Filters,
+    # filter_motion_blur,
+    # filter_salt_pepper_noise,
+    # filter_speckle_noise,
+    FilterEvaluator,
 )
