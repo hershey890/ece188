@@ -5,7 +5,8 @@ from .stage1 import (
     filter_gaussian_blur,
     filter_gaussian_noise,
     # filter_motion_blur,
-    # filter_salt_pepper_noise,
-    # filter_speckle_noise,
+    filter_sp_noise,
+    filter_speckle_noise,
     FilterEvaluator,
+    _gaussian2d
 )

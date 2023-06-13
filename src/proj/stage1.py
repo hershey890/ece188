@@ -8,7 +8,7 @@ import cv2
 import skimage as sk
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 from skimage.filters import unsharp_mask, laplace
-from skimage.restoration import wiener
+from skimage.restoration import wiener, unsupervised_wiener
 
 
 def load_imgs(path: str | Path, encoding: str = 'rgb') -> np.ndarray:
@@ -80,19 +80,35 @@ def filter_gaussian_blur(img) -> np.ndarray:
     """Filters gaussian blurred images."""
     # Benchmark (PSNR, SSIM): (26.5, 0.65). Currently I get 22.4, 0.76
     # baseline: 21.15, 0.70
-    def gaussian_wiener(img, sigma=3.5): # 20.6, 0.6
+    def gaussian_wiener(img, sigma=3.5): # 22.02,, 0.67
+        # output_img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
+        # pd = 15
+        # output_img = cv2.copyMakeBorder(output_img, pd, pd, pd, pd, cv2.BORDER_REFLECT)
+        # h, w = output_img.shape[:2]
+        # psf = _gaussian2d(h, w, sigma=sigma)
+        # y_channel = 2*(output_img[:,:,0]/255) - 1
+        # deconvolved_W = wiener(y_channel, psf, balance=0.05, clip=True)
+        # deconvolved_W = 1/2*(deconvolved_W + 1)
+        # output_img[:,:,0] = (255*deconvolved_W).astype(np.uint8)
+        # output_img = cv2.cvtColor(output_img, cv2.COLOR_YUV2RGB)
+        # output_img = output_img[pd:-pd, pd:-pd]
+        # output_img = cv2.bilateralFilter(output_img, 5, 50, 50)
+        # return output_img
+
         output_img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
-        pd = 15
+        pd = 30
         output_img = cv2.copyMakeBorder(output_img, pd, pd, pd, pd, cv2.BORDER_REFLECT)
         h, w = output_img.shape[:2]
         psf = _gaussian2d(h, w, sigma=sigma)
-        y_channel = 2*(output_img[:,:,0]/255) - 1
-        deconvolved_W = wiener(y_channel, psf, balance=0.05, clip=True)
-        deconvolved_W = 1/2*(deconvolved_W + 1)
-        output_img[:,:,0] = (255*deconvolved_W).astype(np.uint8)
-        output_img = cv2.cvtColor(output_img, cv2.COLOR_YUV2RGB)
+        output_img = 2*(output_img/255) - 1
+
+        output_img[:,:,0] = unsupervised_wiener(output_img[:,:,0], psf, clip=True)[0]
+        # output_img[:,:,1] = unsupervised_wiener(output_img[:,:,1], psf, clip=True)[0]
+        # output_img[:,:,2] = unsupervised_wiener(output_img[:,:,2], psf, clip=True)[0]
+
+        output_img = (255/2*(output_img + 1)).astype(np.uint8)
         output_img = output_img[pd:-pd, pd:-pd]
-        output_img = cv2.bilateralFilter(output_img, 5, 50, 50)
+        output_img = cv2.cvtColor(output_img, cv2.COLOR_YUV2RGB)
         return output_img
 
     def gaussian_unsharp_mask(img): # 22.4, 0.76
@@ -176,10 +192,12 @@ class FilterEvaluator:
     def _run(
         imgs_truth: np.ndarray, imgs_test: np.ndarray, func: Callable, blur_type: str
     ) -> Tuple[float, float, float]:
+        imgs_filtered = []
         for i in range(imgs_truth.shape[0]):
-            imgs_test[i] = func(imgs_test[i])
-        psnr = calc_psnr(imgs_truth, imgs_test)
-        ssim = calc_ssim(imgs_truth, imgs_test)
+            imgs_filtered.append(func(imgs_test[i]))
+        imgs_filtered = np.array(imgs_filtered)
+        psnr = calc_psnr(imgs_truth, imgs_filtered)
+        ssim = calc_ssim(imgs_truth, imgs_filtered)
         return psnr, ssim, blur_type
 
     def run(self, blur_type: str = None) -> Dict:
