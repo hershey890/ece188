@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import cv2
 import skimage as sk
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
-from skimage.filters import unsharp_mask
+from skimage.filters import unsharp_mask, laplace
 from skimage.restoration import wiener
 
 
@@ -78,30 +78,43 @@ def _gaussian2d(h: int, w: int, sigma: float, a: float = 1.0) -> np.ndarray:
 
 def filter_gaussian_blur(img) -> np.ndarray:
     """Filters gaussian blurred images."""
-    # Benchmark (PSNR, SSIM): (26.5, 0.65)
+    # Benchmark (PSNR, SSIM): (26.5, 0.65). Currently I get 22.4, 0.76
+    # baseline: 21.15, 0.70
     def gaussian_wiener(img, sigma=3.5): # 20.6, 0.6
         output_img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
-        h, w = img.shape[:2]
-        psf = _gaussian2d(h, w, sigma=3.5)
-        y_channel = 2*(img[:,:,0]/255) - 1
+        pd = 15
+        output_img = cv2.copyMakeBorder(output_img, pd, pd, pd, pd, cv2.BORDER_REFLECT)
+        h, w = output_img.shape[:2]
+        psf = _gaussian2d(h, w, sigma=sigma)
+        y_channel = 2*(output_img[:,:,0]/255) - 1
         deconvolved_W = wiener(y_channel, psf, balance=0.05, clip=True)
         deconvolved_W = 1/2*(deconvolved_W + 1)
         output_img[:,:,0] = (255*deconvolved_W).astype(np.uint8)
-        return cv2.cvtColor(output_img, cv2.COLOR_YUV2RGB)
+        output_img = cv2.cvtColor(output_img, cv2.COLOR_YUV2RGB)
+        output_img = output_img[pd:-pd, pd:-pd]
+        output_img = cv2.bilateralFilter(output_img, 5, 50, 50)
+        return output_img
 
     def gaussian_unsharp_mask(img): # 22.4, 0.76
         return np.uint8(255*unsharp_mask(img/255, radius=3, amount=3, channel_axis=2))
     
-    return gaussian_unsharp_mask(img)
+    return gaussian_wiener(img)
+    # return gaussian_unsharp_mask(img)
 
 
 def filter_gaussian_noise(img) -> np.ndarray:
     """Filters gaussian noise images."""
-    return img.copy()
+    # goal 19.5, 0.60, baseline 12.33, 0.18
+    # hits 21.30, 0.63
+    img = cv2.medianBlur(img, 5)
+    img = cv2.bilateralFilter(img, 5, 50, 150)
+    return img
+
 
 def filter_motion_blur(img) -> np.ndarray:
     """Filters motion blurred images."""
     return img.copy()
+
 
 def filter_sp_noise(img) -> np.ndarray:
     """Filters salt and pepper noise images."""
@@ -112,8 +125,8 @@ def filter_sp_noise(img) -> np.ndarray:
 def filter_speckle_noise(img) -> np.ndarray:
     """Filters speckle noise images."""
     # goal: 20.0, 0.65, baseline 18.4, 0.60
-    # hits 23.3, 0.77
-    return cv2.medianBlur(img, 3)
+    # hits 
+    img =  cv2.medianBlur(img, 3)
 
 
 class FilterEvaluator:
@@ -143,7 +156,7 @@ class FilterEvaluator:
         "speckle_noise": filter_speckle_noise,
     }
 
-    def __init__(self, data_folder: str | Path, gaussian_sigma: float = 3.75):
+    def __init__(self, data_folder: str | Path):
         """
         Parameters
         ----------
@@ -198,8 +211,8 @@ class FilterEvaluator:
                 print(f"{blur_type}: PASS")
             else:
                 print(f"{blur_type}: FAIL")
-                print(f"\tGoal: PSNR={psnr_goal:.2f}, SSIM={ssim_goal:.2f}")
-                print(f"\tActual: PSNR={psnr:.2f}, SSIM={ssim:.2f}\n")
+            print(f"\tGoal: PSNR={psnr_goal:.2f}, SSIM={ssim_goal:.2f}")
+            print(f"\tActual: PSNR={psnr:.2f}, SSIM={ssim:.2f}\n")
 
         if blur_type is not None:
             psnr_ssim_vals = [
@@ -237,8 +250,8 @@ class FilterEvaluator:
         for i in range(n_images):
             img_filtered = self._funcs[blur_type](self.imgs[blur_type][i])
             img_truth = self.imgs_truth[i]
-            plt.subplot(n_images, 2, 2*i+1)
+            plt.subplot(n_images, 2, 2*i+1, title='Image Truth')
             plt.imshow(img_truth)
-            plt.subplot(n_images, 2, 2*i+2)
+            plt.subplot(n_images, 2, 2*i+2, title='Image Filtered')
             plt.imshow(img_filtered)
         plt.show()
