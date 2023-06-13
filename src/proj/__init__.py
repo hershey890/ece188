@@ -8,5 +8,6 @@ from .stage1 import (
     filter_sp_noise,
     filter_speckle_noise,
     FilterEvaluator,
-    _gaussian2d
+    calc_gaussian_blur_sigma,
+    create_motion_blur_kernel,
 )

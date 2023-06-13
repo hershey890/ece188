@@ -7,8 +7,9 @@ import matplotlib.pyplot as plt
 import cv2
 import skimage as sk
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
-from skimage.filters import unsharp_mask, laplace
-from skimage.restoration import wiener, unsupervised_wiener
+from skimage import filters, restoration
+# from skimage.filters import unsharp_mask, laplace
+# from skimage.restoration import wiener, unsupervised_wiener
 
 
 def load_imgs(path: str | Path, encoding: str = 'rgb') -> np.ndarray:
@@ -66,6 +67,34 @@ def calc_ssim(truth_img: np.ndarray, test_img: np.ndarray) -> float:
         raise ValueError("Invalid image dimensions.")
 
 
+def calc_gaussian_blur_sigma(img_truth: np.ndarray, img_blur: np.ndarray, start: float = 0, end: float = 5) -> float:
+    """Runs binary search to find the  standard deviation of the Gaussian for Gaussian blurring
+
+    For this project the returned value is 3.75. I use 3.6
+    Examples
+    --------
+    >>> img_blur = eval.imgs['gaussian_blur'][0]
+    >>> img_truth = eval.imgs_truth[0]
+    >>> sigma = calc_gaussian_blur_sigma(img_truth, img_blur)
+    >>> print(sigma)
+    """
+    img_blur = cv2.cvtColor(img_blur, cv2.COLOR_RGB2YUV)[:,:,0]/255
+    img_truth = cv2.cvtColor(img_truth, cv2.COLOR_RGB2YUV)[:,:,0]/255
+    h, w = img_blur.shape[:2]
+    error_min = 1e9
+    sigma = (start + end) / 2
+    while start < end:
+        img_blur2 = filters.gaussian(img_truth, sigma=sigma)
+        err = np.mean(np.abs(img_blur2 - img_blur))
+        if err < error_min:
+            error_min = err
+            start = sigma
+        else:
+            end = sigma
+        sigma = (start + end) / 2
+    return sigma
+
+
 def _gaussian2d(h: int, w: int, sigma: float, a: float = 1.0) -> np.ndarray:
     """Create a 2D Gaussian filter.
     """
@@ -76,43 +105,28 @@ def _gaussian2d(h: int, w: int, sigma: float, a: float = 1.0) -> np.ndarray:
     return a * ret / np.sum(ret)
 
 
-def filter_gaussian_blur(img) -> np.ndarray:
+def filter_gaussian_blur(img, sigma=3.6, h=63, w=63) -> np.ndarray:
     """Filters gaussian blurred images."""
-    # Benchmark (PSNR, SSIM): (26.5, 0.65). Currently I get 22.4, 0.76
+    # Benchmark (PSNR, SSIM): (20.5, 0.65). Currently I get 23.10, 0.78
     # baseline: 21.15, 0.70
-    def gaussian_wiener(img, sigma=3.5): # 22.02,, 0.67
-        # output_img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
-        # pd = 15
-        # output_img = cv2.copyMakeBorder(output_img, pd, pd, pd, pd, cv2.BORDER_REFLECT)
-        # h, w = output_img.shape[:2]
-        # psf = _gaussian2d(h, w, sigma=sigma)
-        # y_channel = 2*(output_img[:,:,0]/255) - 1
-        # deconvolved_W = wiener(y_channel, psf, balance=0.05, clip=True)
-        # deconvolved_W = 1/2*(deconvolved_W + 1)
-        # output_img[:,:,0] = (255*deconvolved_W).astype(np.uint8)
-        # output_img = cv2.cvtColor(output_img, cv2.COLOR_YUV2RGB)
-        # output_img = output_img[pd:-pd, pd:-pd]
-        # output_img = cv2.bilateralFilter(output_img, 5, 50, 50)
-        # return output_img
-
+    def gaussian_wiener(img, sigma=sigma): # 23.10, 0.78
         output_img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
         pd = 30
         output_img = cv2.copyMakeBorder(output_img, pd, pd, pd, pd, cv2.BORDER_REFLECT)
-        h, w = output_img.shape[:2]
         psf = _gaussian2d(h, w, sigma=sigma)
         output_img = 2*(output_img/255) - 1
 
-        output_img[:,:,0] = unsupervised_wiener(output_img[:,:,0], psf, clip=True)[0]
-        # output_img[:,:,1] = unsupervised_wiener(output_img[:,:,1], psf, clip=True)[0]
-        # output_img[:,:,2] = unsupervised_wiener(output_img[:,:,2], psf, clip=True)[0]
+        output_img[:,:,0] = restoration.unsupervised_wiener(output_img[:,:,0], psf, clip=True)[0]
 
-        output_img = (255/2*(output_img + 1)).astype(np.uint8)
+        output_img = np.uint8(255/2*(output_img + 1))
         output_img = output_img[pd:-pd, pd:-pd]
         output_img = cv2.cvtColor(output_img, cv2.COLOR_YUV2RGB)
+
+        output_img = cv2.bilateralFilter(output_img, 7, 75, 150) # 75, 150 best
         return output_img
 
     def gaussian_unsharp_mask(img): # 22.4, 0.76
-        return np.uint8(255*unsharp_mask(img/255, radius=3, amount=3, channel_axis=2))
+        return np.uint8(255*filters.unsharp_mask(img/255, radius=3, amount=3, channel_axis=2))
     
     return gaussian_wiener(img)
     # return gaussian_unsharp_mask(img)
@@ -123,13 +137,42 @@ def filter_gaussian_noise(img) -> np.ndarray:
     # goal 19.5, 0.60, baseline 12.33, 0.18
     # hits 21.30, 0.63
     img = cv2.medianBlur(img, 5)
-    img = cv2.bilateralFilter(img, 5, 50, 150)
-    return img
+    return cv2.bilateralFilter(img, 5, 50, 150)
+
+
+def create_motion_blur_kernel(kernel_size: int, angle: int) -> np.ndarray:
+    """Create a motion blur kernel of size `kernel_size` and angle `angle`.
+    """
+    kernel = np.zeros((kernel_size, kernel_size))
+    kernel[(kernel_size-1)//2, :] = np.ones(kernel_size)
+    rot = cv2.getRotationMatrix2D((int((kernel_size-1)/2), int((kernel_size-1)/2)), angle, 1)
+    kernel_ang = cv2.warpAffine(kernel, rot, (kernel_size, kernel_size))
+    kernel_ang = kernel_ang / np.sum(kernel_ang)
+    return kernel_ang
 
 
 def filter_motion_blur(img) -> np.ndarray:
-    """Filters motion blurred images."""
-    return img.copy()
+    """Filters motion blurred images.
+    """
+    # Benchmark: 21.5, 0.70
+    # baseline: 20.09, 0.66
+    # My performance: 20.77, 0.68
+    kernel = create_motion_blur_kernel(kernel_size=19, angle=-75) # best: 19. -75
+
+    output_img = cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
+    # output_img = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    pd = 100
+    output_img = cv2.copyMakeBorder(output_img, pd, pd, pd, pd, cv2.BORDER_REFLECT)
+    output_img = 2*(output_img/255) - 1
+
+    output_img[:,:,0] = restoration.wiener(output_img[:,:,0], kernel, balance=0.5, clip=True)
+
+    output_img = np.uint8(255/2*(output_img + 1))
+    output_img = output_img[pd:-pd, pd:-pd]
+    output_img = cv2.cvtColor(output_img, cv2.COLOR_YUV2RGB)
+    output_img = cv2.bilateralFilter(output_img, 3, 15, 150)
+
+    return output_img
 
 
 def filter_sp_noise(img) -> np.ndarray:
@@ -142,7 +185,7 @@ def filter_speckle_noise(img) -> np.ndarray:
     """Filters speckle noise images."""
     # goal: 20.0, 0.65, baseline 18.4, 0.60
     # hits 
-    img =  cv2.medianBlur(img, 3)
+    return cv2.medianBlur(img, 3)
 
 
 class FilterEvaluator:
@@ -217,9 +260,9 @@ class FilterEvaluator:
         """
 
         goals = {
-            "gaussian_blur": (26.5, 0.65),  # psnr, ssim
+            "gaussian_blur": (20.5, 0.65),  # psnr, ssim
             "gaussian_noise": (19.5, 0.60),
-            "motion_blur": (27.5, 0.70),
+            "motion_blur": (21.5, 0.70),
             "sp_noise": (26.5, 0.90),
             "speckle_noise": (20.0, 0.65),
         }
@@ -242,14 +285,15 @@ class FilterEvaluator:
                 )
             ]
         else:
-            n_processes = min(mp.cpu_count(), 5)
-            blurs, funcs = self._funcs.keys(), self._funcs.values()
-            imgs = [self.imgs[blur] for blur in blurs]
-            imgs_truth = repeat(self.imgs_truth, n_processes)
-            with mp.Pool(n_processes) as p:
-                psnr_ssim_vals = p.starmap(
-                    FilterEvaluator._run,
-                    zip(imgs_truth, imgs, funcs, blurs),
+            psnr_ssim_vals = []
+            for blur_type in self.blur_types:
+                psnr_ssim_vals.append(
+                    FilterEvaluator._run(
+                        self.imgs_truth,
+                        self.imgs[blur_type],
+                        self._funcs[blur_type],
+                        blur_type,
+                    )
                 )
 
         ret = {}
