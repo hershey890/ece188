@@ -18,16 +18,23 @@ def load_imgs(path: str | Path, encoding: str = 'rgb') -> np.ndarray:
     Parameters
     ----------
     path : str | Path
-    encoding: {'rgb', 'yuv'}
-        The color encoding of the images. If 'yuv', the images are converted to YUV.
+    encoding: {'rgb', 'yuv', 'gray}, default='rgb'
+        The color encoding of the images
     """
     p = Path(path)
+    if not p.exists():
+        raise ValueError("Path does not exist.")
+    if not p.is_dir():
+        raise ValueError("Path must be a directory.")
+    
     for f in p.iterdir():
         if f.suffix in (".jpg", ".png", ".jpeg", ".bmp"):
             if encoding == 'rgb':
                 yield cv2.imread(str(f))[:, :, ::-1]  # -1: BGR to RGB
             elif encoding == 'yuv':
                 yield cv2.cvtColor(cv2.imread(str(f)), cv2.COLOR_BGR2YUV)
+            elif encoding == 'gray':
+                yield cv2.cvtColor(cv2.imread(str(f)), cv2.COLOR_BGR2GRAY)
             else:
                 raise ValueError("Invalid encoding.")
 

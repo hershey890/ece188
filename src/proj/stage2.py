@@ -1,5 +1,3 @@
-
-
 import sys
 from typing import Tuple, List, Union, Dict
 import numpy as np
@@ -24,7 +22,6 @@ def psnr_ssim_rect(orig_img: np.ndarray, rectified_img: np.ndarray) -> Tuple[flo
     # Crop the image using the inscribed rectangle's coordinates
     cropped_img = orig_img[y_min:y_max, x_min:x_max]
     cropped_img_rect = rectified_img[y_min:y_max, x_min:x_max]
-
     
     psnr_out = peak_signal_noise_ratio(cropped_img, cropped_img_rect)
     ssim_out = structural_similarity(cropped_img, cropped_img_rect, channel_axis=2)
