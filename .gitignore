@@ -3,7 +3,7 @@
 ./data/
 ./src/kitt_object_vis/
 ./src/lir/
-./src/kitti-velodyne-viewer/
+./src/Kitti2TFRecords/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
