@@ -1,6 +1,9 @@
 # Custom
 *.pdf
 ./data/
+./src/kitt_object_vis/
+./src/lir/
+./src/kitti-velodyne-viewer/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
